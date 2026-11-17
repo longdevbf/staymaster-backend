@@ -1,0 +1,25 @@
+# Build output
+bin/
+obj/
+publish/
+*.zip
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Local / secret configuration (see appsettings.json for the keys to set)
+appsettings.Development.json
+appsettings.Production.json
+appsettings.*.local.json
+.env
+
+# Runtime uploads (seed images already in the repo stay tracked)
+wwwroot/uploads/
+
+# OS
+.DS_Store
+Thumbs.db
