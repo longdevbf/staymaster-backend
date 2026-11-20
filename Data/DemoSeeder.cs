@@ -230,8 +230,9 @@ public static class DemoSeeder
         "Kỷ niệm ngày cưới, nhờ trang trí giúp ạ.", "", "", "",
     };
 
-    public static async Task RunAsync(AppDbContext db, ILogger logger)
+    public static async Task RunAsync(AppDbContext db, ILogger logger, string? adminPassword = null)
     {
+        var adminPwd = string.IsNullOrWhiteSpace(adminPassword) ? AdminPassword : adminPassword;
         var rng = new Random(20261117);
         var today = DateTime.Today;
 
@@ -265,7 +266,7 @@ public static class DemoSeeder
         }
 
         // ── Admin ──
-        NewUser("Quản trị StayMaster", AdminEmail, "0900000000", AdminPassword, AppRoles.Admin, "Hà Nội", today.AddMonths(-14));
+        NewUser("Quản trị StayMaster", AdminEmail, "0900000000", adminPwd, AppRoles.Admin, "Hà Nội", today.AddMonths(-14));
 
         // ── Đối tác, cơ sở, phòng ──
         var allRooms = new List<(Room Room, Property Property, Partner Partner)>();

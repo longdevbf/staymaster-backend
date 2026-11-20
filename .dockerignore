@@ -1,0 +1,17 @@
+bin/
+obj/
+publish/
+out/
+*.zip
+.env
+.env.*
+appsettings.Development.json
+appsettings.Production.json
+appsettings.*.local.json
+wwwroot/uploads/
+scripts/
+deploy/
+.git/
+.vs/
+.vscode/
+.idea/

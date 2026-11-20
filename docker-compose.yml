@@ -1,0 +1,81 @@
+# StayMaster backend trên VPS: SQL Server + API (+ Caddy cấp HTTPS nếu bật profile "https").
+#   cp deploy/.env.example .env   # rồi điền giá trị
+#   docker compose --profile https up -d --build      # có domain trỏ về VPS, cổng 80/443 còn trống
+#   docker compose up -d --build                       # VPS đã có nginx/Caddy riêng: proxy tới 127.0.0.1:${API_PORT}
+# Chi tiết: DEPLOY.md, mục "Chạy bằng Docker".
+name: staymaster
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    # SQL Server chỉ có bản x86_64; máy Mac M-series chạy qua Rosetta
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Express
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Đặt MSSQL_SA_PASSWORD trong .env}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  # Tạo DB từ database/QL_NhaNghi.sql lần đầu, rồi thoát
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    volumes:
+      - ./database:/sql:ro
+      - ./deploy/init-db.sh:/init-db.sh:ro
+    entrypoint: ["/bin/bash", "/init-db.sh"]
+    restart: "no"
+
+  api:
+    build: .
+    image: staymaster-api
+    env_file: .env
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=QL_NhaNghi;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;"
+      Database__MigrateOnStartup: "true"
+      App__TrustForwardedHeaders: "true"
+      TZ: Asia/Ho_Chi_Minh
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    volumes:
+      - uploads:/app/wwwroot/uploads
+    # Chỉ mở cho máy VPS (reverse proxy); không mở thẳng ra Internet
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  # HTTPS tự động (Let's Encrypt) cho API_DOMAIN. Cần domain trỏ về IP VPS và cổng 80, 443 còn trống.
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    depends_on:
+      - api
+    command: caddy reverse-proxy --from ${API_DOMAIN:-localhost} --to api:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  mssql-data:
+  uploads:
+  caddy-data:
+  caddy-config:

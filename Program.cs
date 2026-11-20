@@ -6,6 +6,7 @@ using HotelManagement.API.Middleware;
 using HotelManagement.API.Models;
 using HotelManagement.API.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -177,6 +178,17 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Chạy sau reverse proxy (Caddy/nginx trong docker-compose): lấy IP thật của khách từ X-Forwarded-For,
+// nếu không giới hạn 20 tin nhắn/phút của chatbot sẽ tính chung cho mọi người. Chỉ bật khi API không mở thẳng ra
+// Internet (docker-compose chỉ mở cổng API cho 127.0.0.1), vì header này giả được.
+if (builder.Configuration.GetValue<bool>("App:TrustForwardedHeaders"))
+{
+    var forwarded = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto };
+    forwarded.KnownNetworks.Clear();
+    forwarded.KnownProxies.Clear();
+    app.UseForwardedHeaders(forwarded);
+}
+
 // `dotnet run -- --seed-demo`: xoá sạch dữ liệu và tạo dữ liệu mẫu (Data/DemoSeeder.cs). Chỉ chạy ở Development.
 if (args.Contains("--seed-demo"))
 {
@@ -188,7 +200,9 @@ if (args.Contains("--seed-demo"))
     using var seedScope = app.Services.CreateScope();
     var seedDb = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
     await seedDb.Database.MigrateAsync();
-    await DemoSeeder.RunAsync(seedDb, seedScope.ServiceProvider.GetRequiredService<ILogger<Program>>());
+    // Có SeedAdmin:Password thì admin mẫu dùng mật khẩu đó (server public không nên để Admin@123)
+    await DemoSeeder.RunAsync(seedDb, seedScope.ServiceProvider.GetRequiredService<ILogger<Program>>(),
+        builder.Configuration["SeedAdmin:Password"]);
     return;
 }
 
@@ -209,6 +223,13 @@ using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
     var logger = services.GetRequiredService<ILogger<Program>>();
+    // Docker: DB tạo từ database/QL_NhaNghi.sql, các migration sau đó áp dụng khi khởi động.
+    // Lỗi migration thì dừng hẳn (để container khởi động lại), không chạy tiếp với DB thiếu cột.
+    if (builder.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
+    {
+        logger.LogInformation("Applying EF migrations (Database:MigrateOnStartup)");
+        await services.GetRequiredService<AppDbContext>().Database.MigrateAsync();
+    }
     try
     {
         var context = services.GetRequiredService<AppDbContext>();

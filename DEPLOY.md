@@ -1,6 +1,7 @@
 # Deploy StayMaster (backend + frontend)
 
-Áp dụng cho các nhánh `feat/srs-day1` → `feat/srs-day3`. Làm theo đúng thứ tự.
+Có hai cách: **Docker trên VPS** (mục D, gọn nhất: SQL Server + API + HTTPS trong một lệnh) hoặc host .NET có sẵn
+như somee.com (mục 1–3). Frontend luôn deploy lên Vercel (mục 4). Làm mục 0 trước trong cả hai cách.
 
 ## 0. Việc bắt buộc trước khi deploy
 
@@ -10,6 +11,58 @@
 3. **Đổi mật khẩu tài khoản `admin@staymaster.com`** nếu tài khoản này có trên DB thật. Code cũ tạo nó với mật khẩu
    `Admin123!` viết cứng trong repo công khai. Code mới không còn tạo tài khoản này.
 4. **Sao lưu DB thật** trước khi chạy migration.
+
+## D. Chạy bằng Docker trên VPS
+
+Cần: VPS **x86_64** (image SQL Server không có bản ARM), còn trống **≥ 2 GB RAM** cho SQL Server, đã cài Docker và
+Docker Compose. Muốn HTTPS tự động thì cần một domain (bản ghi A trỏ về IP VPS) và cổng 80, 443 chưa bị dịch vụ khác dùng.
+Frontend trên Vercel chạy `https`, nên API bắt buộc phải có `https`.
+
+```bash
+git clone https://github.com/longdevbf/staymaster-backend.git && cd staymaster-backend
+cp deploy/.env.example .env        # điền: MSSQL_SA_PASSWORD, API_DOMAIN, Jwt__SecretKey, SeedAdmin__Password, SePay, Ai
+docker compose --profile https up -d --build
+docker compose logs -f api         # đợi dòng "Now listening on: http://[::]:8080"
+curl https://<API_DOMAIN>/api/settings/public
+```
+
+- Lần đầu: container `db-init` tạo DB từ `database/QL_NhaNghi.sql`, API tự chạy các migration khi khởi động
+  (`Database__MigrateOnStartup`), **không cần** chạy tay các file trong `database/migrations/`.
+- Dữ liệu nằm trong volume `mssql-data`, ảnh người dùng tải lên trong volume `uploads`; `docker compose down` không
+  xoá chúng (`down -v` thì có).
+- Cập nhật code: `git pull && docker compose --profile https up -d --build`.
+- Sao lưu DB: `docker compose exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$MSSQL_SA_PASSWORD"
+  -Q "BACKUP DATABASE QL_NhaNghi TO DISK='/var/opt/mssql/backup.bak'"` rồi `docker compose cp db:/var/opt/mssql/backup.bak .`
+
+**VPS đã có nginx/Caddy chiếm cổng 80/443:** chạy `docker compose up -d --build` (không có `--profile https`) và cho proxy
+sẵn có chuyển domain về `127.0.0.1:${API_PORT}`, giữ header `Host`, `X-Forwarded-For`, `X-Forwarded-Proto` (link ảnh
+tải lên dựa vào hai header cuối để ra đúng `https://`). Ví dụ nginx:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 10m;
+}
+```
+
+**Dữ liệu mẫu (tuỳ chọn, XOÁ SẠCH dữ liệu hiện có):** phải dừng API trước, nếu không job tự huỷ đơn của API ghi vào DB
+trong lúc đang xoá và lệnh seed lỗi.
+
+```bash
+docker compose stop api
+docker compose run --rm --no-deps -e ASPNETCORE_ENVIRONMENT=Development -e Database__MigrateOnStartup=false api --seed-demo
+docker compose start api
+```
+
+Admin mẫu `admin@staymaster.vn` dùng mật khẩu `SeedAdmin__Password` trong `.env`. Các tài khoản mẫu khác (`*@demo.vn` /
+`Demo@123`, `khach@test.local` và `chunha@test.local` / `Test123!`) có mật khẩu công khai trong repo: trên server public ai
+cũng đăng nhập được, nên chỉ dùng để demo.
+
+Sau khi API chạy: đặt `NEXT_PUBLIC_API_URL=https://<API_DOMAIN>/api` trên Vercel (mục 4) và khai báo webhook SePay là
+`https://<API_DOMAIN>/api/payment/sepay-webhook`.
 
 ## 1. Cấu hình backend trên server
 
